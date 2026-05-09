@@ -1,0 +1,8 @@
+{
+  "provider": "deepseek",
+  "model": "deepseek-chat",
+  "api_key": "gAAAAABp-XZHt-AXQ1Yecssmv_7IDYgYT5Ts5Xr3voF-Y0c-2tD9-ZtpFi2DqOhpCbpJ1670MiNKASQBUonwTCv_Q1kOF6WMhQ==",
+  "base_url": null,
+  "temperature": 0.8,
+  "max_tokens": 1024
+}
