@@ -149,20 +149,34 @@ export default function SkillChatPage() {
         }))
       ];
 
-      const response = await getAIService().chatCompletion(chatMessages, {
-        temperature: 0.8,
-        maxTokens: 2048,
-      });
-
       const assistantMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: response.content,
+        content: '',
         timestamp: Date.now()
       };
 
+      const messagesWithPlaceholder = [...updatedMessages, assistantMessage];
+      setMessages(messagesWithPlaceholder);
+
+      await getAIService().streamChatCompletion(
+        chatMessages,
+        (chunk: string, done?: boolean) => {
+          if (done) return;
+          assistantMessage.content += chunk;
+          setMessages(prev => {
+            const updated = [...prev];
+            const lastMsg = updated[updated.length - 1];
+            if (lastMsg && lastMsg.id === assistantMessage.id) {
+              updated[updated.length - 1] = { ...lastMsg, content: assistantMessage.content };
+            }
+            return updated;
+          });
+        },
+        { temperature: 0.8, maxTokens: 2048 }
+      );
+
       const finalMessages = [...updatedMessages, assistantMessage];
-      setMessages(finalMessages);
       saveHistory(finalMessages);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : '发送消息失败';

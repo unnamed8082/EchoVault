@@ -1,9 +1,11 @@
-from openai import OpenAI
+from openai import AsyncOpenAI
+from typing import AsyncGenerator
 from ..base import BaseLLMClient, LLMResponse, LLMUsage
 
 class QwenClient(BaseLLMClient):
     def __init__(self, api_key: str, model: str = "qwen-turbo", base_url: str = None):
-        self.client = OpenAI(
+        super().__init__()
+        self.client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
         )
@@ -12,8 +14,8 @@ class QwenClient(BaseLLMClient):
     @property
     def model_name(self): return self._model
 
-    def chat(self, messages, temperature=0.7, max_tokens=2048):
-        resp = self.client.chat.completions.create(
+    async def chat(self, messages, temperature=0.7, max_tokens=2048):
+        resp = await self.client.chat.completions.create(
             model=self._model, messages=messages,
             temperature=temperature, max_tokens=max_tokens
         )
@@ -24,5 +26,15 @@ class QwenClient(BaseLLMClient):
         )
         return LLMResponse(content=resp.choices[0].message.content, usage=usage, model=self._model)
 
-    def distillation_analyze(self, chat_summary, target_name):
-        return self.chat(...)  # 同构
+    async def chat_stream(self, messages, temperature=0.7, max_tokens=2048):
+        response = await self.client.chat.completions.create(
+            model=self._model, messages=messages,
+            temperature=temperature, max_tokens=max_tokens,
+            stream=True
+        )
+        async for chunk in response:
+            if chunk.choices[0].delta.content is not None:
+                yield chunk.choices[0].delta.content
+
+    async def distillation_analyze(self, chat_summary, target_name, enable_retry=True):
+        return await super().distillation_analyze(chat_summary, target_name, enable_retry)

@@ -1,4 +1,4 @@
-/** @type {import('next').NextConfig} */
+const { withSerwist } = require("@serwist/next");
 const path = require('path');
 
 const nextConfig = {
@@ -29,4 +29,9 @@ const nextConfig = {
   },
 };
 
-module.exports = nextConfig;
+module.exports = withSerwist({
+  ...nextConfig,
+})({
+  sw: "sw.ts",
+  swSrc: "app/sw.ts",
+});

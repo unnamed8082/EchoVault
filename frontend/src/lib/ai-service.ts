@@ -319,7 +319,8 @@ export class AIService {
       messages: messages.map(m => ({ role: m.role, content: m.content })),
       max_tokens: options.maxTokens || 4096,
       temperature: options.temperature ?? 0.7,
-      stream: true
+      stream: true,
+      api_key: cfg.apiKey || undefined,
     };
 
     let fullContent = '';
@@ -337,7 +338,7 @@ export class AIService {
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         throw new APIError(
-          `Stream API Error (${response.status}): ${errorData.error?.message}`,
+          `Stream API Error (${response.status}): ${errorData.detail || errorData.error?.message}`,
           response.status
         );
       }

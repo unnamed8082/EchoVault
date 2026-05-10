@@ -2,12 +2,13 @@
 认证 API 路由（JWT）
 """
 
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr, Field
 from jose import JWTError, jwt
@@ -59,6 +60,9 @@ def _init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
+        if "phone" not in columns:
+            conn.execute("ALTER TABLE users ADD COLUMN phone TEXT")
 
 
 _init_db()
@@ -139,3 +143,42 @@ async def login(user: UserLogin):
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
     )
     return TokenResponse(access_token=access_token)
+
+
+class BindPhoneRequest(BaseModel):
+    username: str
+    phone: str
+
+
+PHONE_PATTERN = re.compile(r"^1[3-9]\d{9}$")
+
+
+@router.post("/bindPhone", summary="绑定手机号")
+async def bind_phone(req: BindPhoneRequest, current_user: dict = Depends(get_current_user)):
+    if current_user["username"] != req.username:
+        raise HTTPException(status_code=403, detail="无权操作其他用户")
+    if not PHONE_PATTERN.match(req.phone):
+        raise HTTPException(status_code=400, detail="手机号格式不正确")
+    with get_db() as conn:
+        row = conn.execute("SELECT username FROM users WHERE username = ?", (req.username,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        conn.execute("UPDATE users SET phone = ? WHERE username = ?", (req.phone, req.username))
+    return {"success": True, "message": "手机号绑定成功"}
+
+
+@router.get("/profile", summary="获取用户资料")
+async def get_profile(token: str = Query(...), current_user: dict = Depends(get_current_user)):
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT username, email, phone, created_at FROM users WHERE username = ?",
+            (current_user["username"],),
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    return {
+        "username": row[0],
+        "email": row[1],
+        "phone": row[2],
+        "created_at": row[3],
+    }

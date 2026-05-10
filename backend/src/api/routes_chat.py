@@ -5,7 +5,10 @@
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+import json
+import time
 import sys
 
 # 添加路径
@@ -40,6 +43,7 @@ class CompletionsRequest(BaseModel):
     messages: List[ChatMessage] = Field(..., description="消息列表")
     max_tokens: int = Field(2048, description="最大生成 token 数")
     temperature: float = Field(0.7, description="温度")
+    stream: bool = Field(False, description="是否流式响应")
     api_key: Optional[str] = Field(None, description="API Key")
 
 
@@ -121,14 +125,45 @@ async def completions(request: CompletionsRequest):
         )
 
         messages = [{"role": m.role, "content": m.content} for m in request.messages]
-        llm_response: LLMResponse = client.chat(
+
+        if request.stream:
+            chat_id = f"chatcmpl-{int(time.time() * 1000)}"
+            model_name = request.model
+
+            async def event_generator():
+                try:
+                    async for token in client.chat_stream(
+                        messages,
+                        temperature=request.temperature,
+                        max_tokens=request.max_tokens,
+                    ):
+                        chunk = {
+                            "choices": [{"delta": {"content": token}, "index": 0}],
+                            "id": chat_id,
+                            "model": model_name,
+                        }
+                        yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                    yield "data: [DONE]\n\n"
+                except Exception:
+                    error_chunk = {
+                        "choices": [{"delta": {"content": ""}, "index": 0}],
+                        "id": chat_id,
+                        "model": model_name,
+                        "error": "stream_error",
+                    }
+                    yield f"data: {json.dumps(error_chunk, ensure_ascii=False)}\n\n"
+                    yield "data: [DONE]\n\n"
+
+            return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+        llm_response: LLMResponse = await client.chat(
             messages,
             temperature=request.temperature,
             max_tokens=request.max_tokens,
         )
 
         return {
-            "id": f"chatcmpl-{int(__import__('time').time() * 1000)}",
+            "id": f"chatcmpl-{int(time.time() * 1000)}",
             "content": llm_response.content,
             "model": llm_response.model,
             "provider": request.provider,
@@ -231,7 +266,7 @@ async def chat(request: ChatRequest):
             api_key=request.api_key or "demo_key"
         )
         
-        llm_response: LLMResponse = client.chat(messages)
+        llm_response: LLMResponse = await client.chat(messages)
         
         return ChatResponse(
             content=llm_response.content,

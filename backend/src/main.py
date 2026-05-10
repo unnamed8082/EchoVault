@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from config import settings
+from database import init_db
 from api.middleware import RateLimiter
 
 # 导入路由
@@ -22,6 +23,7 @@ from api.routes_auth import router as auth_router
 from api.routes_llm_config import router as models_router
 from api.routes_distill import router as distill_router
 from api.routes_chat import router as chat_router
+from api.routes_privacy import router as privacy_router
 
 # 加载环境变量
 load_dotenv()
@@ -74,6 +76,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.on_event("startup")
+async def startup_event():
+    await init_db()
+
+
 # 限流配置
 rate_limiter = RateLimiter(max_requests=60, window_seconds=60)
 
@@ -95,6 +103,7 @@ app.include_router(auth_router, prefix="/api/auth", tags=["认证"])
 app.include_router(models_router, prefix="/api/models", tags=["LLM配置"])
 app.include_router(distill_router, prefix="/api/distill", tags=["人格蒸馏"])
 app.include_router(chat_router, prefix="/api/chat", tags=["聊天对话"])
+app.include_router(privacy_router, prefix="/api/privacy", tags=["隐私控制"])
 
 
 @app.get("/", summary="服务信息", description="获取服务的基本信息，包括名称、版本和文档链接")

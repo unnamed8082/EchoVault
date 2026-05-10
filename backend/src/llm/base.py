@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from pydantic import BaseModel
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, AsyncGenerator
 import json
 import re
 
@@ -8,7 +8,7 @@ class LLMUsage(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
-    estimated_cost: float = 0.0  # 添加成本估算
+    estimated_cost: float = 0.0
 
 class LLMResponse(BaseModel):
     content: str
@@ -16,19 +16,15 @@ class LLMResponse(BaseModel):
     model: str
     
     def extract_json(self) -> Optional[Dict[str, Any]]:
-        """尝试从响应内容中提取 JSON，支持容错解析"""
-        # 首先尝试直接解析
         try:
             return json.loads(self.content)
         except json.JSONDecodeError:
             pass
         
-        # 寻找第一个 { 的位置
         start = self.content.find('{')
         if start == -1:
             return None
         
-        # 从开始位置开始，寻找匹配的 }
         brace_count = 1
         end = start + 1
         while end < len(self.content) and brace_count > 0:
@@ -39,7 +35,6 @@ class LLMResponse(BaseModel):
             end += 1
         
         if brace_count == 0:
-            # 找到了完整的块
             json_str = self.content[start:end]
             try:
                 return json.loads(json_str)
@@ -53,17 +48,19 @@ class BaseLLMClient(ABC):
         self.total_usage = LLMUsage()
     
     @abstractmethod
-    def chat(self, messages: List[Dict[str, str]], temperature: float = 0.7, max_tokens: int = 2048) -> LLMResponse:
+    async def chat(self, messages: List[Dict[str, str]], temperature: float = 0.7, max_tokens: int = 2048) -> LLMResponse:
         pass
 
-    def distillation_analyze(
+    @abstractmethod
+    async def chat_stream(self, messages: List[Dict[str, str]], temperature: float = 0.7, max_tokens: int = 2048) -> AsyncGenerator[str, None]:
+        yield ""
+
+    async def distillation_analyze(
         self, 
         chat_summary: str, 
         target_name: str,
         enable_retry: bool = True
     ) -> LLMResponse:
-        """人格蒸馏分析，包含容错和重试机制"""
-        # 优化的 System Prompt，确保清晰引导 JSON 输出
         system_prompt = f"""你是一个专业的人格蒸馏专家。
 你的任务是从给定的聊天摘要中分析并生成目标人物「{target_name}」的人格模型。
 
@@ -89,13 +86,10 @@ class BaseLLMClient(ABC):
             {"role": "user", "content": user_prompt}
         ]
         
-        # 第一次调用
-        response = self.chat(messages, temperature=0.3, max_tokens=4096)
+        response = await self.chat(messages, temperature=0.3, max_tokens=4096)
         
-        # 尝试解析 JSON
         parsed = response.extract_json()
         
-        # 如果第一次解析失败且启用重试，则重试一次
         if parsed is None and enable_retry:
             retry_prompt = f"""之前的输出格式不正确。请严格只输出有效的 JSON，不要任何额外内容。
 聊天摘要：
@@ -107,18 +101,15 @@ class BaseLLMClient(ABC):
                 {"role": "assistant", "content": response.content},
                 {"role": "user", "content": retry_prompt}
             ]
-            retry_response = self.chat(retry_messages, temperature=0.2, max_tokens=4096)
+            retry_response = await self.chat(retry_messages, temperature=0.2, max_tokens=4096)
             
-            # 累加使用量
             response.usage.input_tokens += retry_response.usage.input_tokens
             response.usage.output_tokens += retry_response.usage.output_tokens
             response.usage.total_tokens += retry_response.usage.total_tokens
             response.usage.estimated_cost += retry_response.usage.estimated_cost
             
-            # 更新内容为重试响应
             response.content = retry_response.content
         
-        # 更新总成本
         self.total_usage.input_tokens += response.usage.input_tokens
         self.total_usage.output_tokens += response.usage.output_tokens
         self.total_usage.total_tokens += response.usage.total_tokens

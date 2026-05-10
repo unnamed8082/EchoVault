@@ -13,10 +13,12 @@
     "test:e2e:report": "playwright show-report"
   },
   "dependencies": {
+    "@serwist/next": "^9.5.11",
     "axios": "^1.6.0",
     "next": "^14",
     "react": "^18",
-    "react-dom": "^18"
+    "react-dom": "^18",
+    "serwist": "^9.5.11"
   },
   "devDependencies": {
     "@playwright/test": "^1.52.0",
