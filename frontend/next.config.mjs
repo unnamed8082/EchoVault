@@ -37,6 +37,6 @@ const nextConfig = {
 };
 
 export default withSerwistInit({
-  swSrc: "app/sw.ts",
+  swSrc: "src/sw.ts",
   swDest: "public/sw.js",
 })(nextConfig);
