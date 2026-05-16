@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { getJSON, setJSON } from '../../../../lib/storage';
 import { AIService, ChatMessage as AIChatMessage } from '../../../../lib/ai-service';
+import { distillAPI } from '../../../../lib/api-client';
 
 interface Agent {
   id: string;
@@ -12,6 +13,7 @@ interface Agent {
   description: string;
   personality: string[];
   color: string;
+  isBackend?: boolean;
 }
 
 interface ChatMessage {
@@ -91,12 +93,32 @@ export default function AgentChatPage() {
   const loadAgentAndHistory = async () => {
     try {
       let currentAgent = defaultAgents.find(a => a.id === agentId);
-      
+
       if (!currentAgent) {
         const savedAgents = await getJSON<Agent[]>(STORAGE_KEY_AGENTS, []);
         currentAgent = savedAgents.find(a => a.id === agentId) || undefined;
       }
-      
+
+      // Try loading from backend
+      if (!currentAgent) {
+        try {
+          const backendSkill = await distillAPI.getSkill(agentId);
+          const traits = backendSkill.persona_traits;
+          const tags = Array.isArray(traits?.tags) ? traits.tags as string[] : [];
+          currentAgent = {
+            id: backendSkill.slug,
+            name: backendSkill.name,
+            avatar: '🤖',
+            description: backendSkill.lessons_content || tags.join('、') || '数字分身',
+            personality: tags.length > 0 ? tags : ['个性化', '数字分身'],
+            color: 'from-indigo-500 to-purple-500',
+            isBackend: true,
+          };
+        } catch {
+          // Not a backend skill
+        }
+      }
+
       if (currentAgent) {
         setAgent(currentAgent);
         
@@ -157,20 +179,48 @@ export default function AgentChatPage() {
         }))
       ];
 
-      const response = await getAIService().chatCompletion(chatMessages, {
-        temperature: 0.8,
-        maxTokens: 2048,
-      });
-
       const agentMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
         role: 'agent',
-        content: response.content,
+        content: '',
         timestamp: Date.now()
       };
 
+      const messagesWithPlaceholder = [...updatedMessages, agentMessage];
+      setMessages(messagesWithPlaceholder);
+
+      const streamCallback = (chunk: string, done?: boolean) => {
+        if (done) return;
+        agentMessage.content += chunk;
+        setMessages(prev => {
+          const updated = [...prev];
+          const lastMsg = updated[updated.length - 1];
+          if (lastMsg && lastMsg.id === agentMessage.id) {
+            updated[updated.length - 1] = { ...lastMsg, content: agentMessage.content };
+          }
+          return updated;
+        });
+      };
+
+      if (agent.isBackend) {
+        await getAIService().streamSkillChat(
+          agentId,
+          updatedMessages.map(m => ({
+            role: m.role === 'agent' ? 'assistant' as const : 'user' as const,
+            content: m.content
+          })),
+          streamCallback,
+          { temperature: 0.8, maxTokens: 2048 }
+        );
+      } else {
+        await getAIService().streamChatCompletion(
+          chatMessages,
+          streamCallback,
+          { temperature: 0.8, maxTokens: 2048 }
+        );
+      }
+
       const finalMessages = [...updatedMessages, agentMessage];
-      setMessages(finalMessages);
       saveHistory(finalMessages);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : '发送消息失败';

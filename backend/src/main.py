@@ -9,6 +9,9 @@ from pathlib import Path
 src_dir = Path(__file__).parent
 sys.path.insert(0, str(src_dir))
 
+# 尽早导入 Turso 兼容层，确保在数据库连接前完成补丁
+import turso_compat
+
 # 现在可以安全导入
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware

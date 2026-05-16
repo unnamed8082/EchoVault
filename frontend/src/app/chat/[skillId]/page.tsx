@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { getJSON, setJSON } from '../../../lib/storage';
 import { AIService, ChatMessage as AIChatMessage } from '../../../lib/ai-service';
+import { distillAPI } from '../../../lib/api-client';
 
 interface SkillInfo {
   id: string;
@@ -12,6 +13,7 @@ interface SkillInfo {
   capabilities?: string[];
   avatar?: string;
   color?: string;
+  isBackend?: boolean;
 }
 
 interface ChatMessage {
@@ -83,20 +85,33 @@ export default function SkillChatPage() {
 
   const loadSkillAndHistory = async () => {
     try {
-      let currentSkill = defaultSkills.find(s => s.id === skillId);
-
-      if (!currentSkill) {
-        const savedSkills = await getJSON<SkillInfo[]>(STORAGE_KEY_SKILLS, []);
-        currentSkill = savedSkills.find(s => s.id === skillId) || undefined;
+      // Try loading from backend first
+      try {
+        const backendSkill = await distillAPI.getSkill(skillId);
+        const traits = backendSkill.persona_traits;
+        const tags = Array.isArray(traits?.tags) ? traits.tags as string[] : [];
+        setSkill({
+          id: backendSkill.slug,
+          name: backendSkill.name,
+          description: backendSkill.lessons_content || tags.join('、') || '数字分身',
+          capabilities: tags,
+          avatar: '🤖',
+          color: 'from-indigo-500 to-purple-500',
+          isBackend: true,
+        });
+      } catch {
+        // Backend unavailable, fall back to local
+        let currentSkill = defaultSkills.find(s => s.id === skillId);
+        if (!currentSkill) {
+          const savedSkills = await getJSON<SkillInfo[]>(STORAGE_KEY_SKILLS, []);
+          currentSkill = savedSkills.find(s => s.id === skillId) || undefined;
+        }
+        if (currentSkill) setSkill(currentSkill);
       }
 
-      if (currentSkill) {
-        setSkill(currentSkill);
-
-        const chatKey = `echovault_skill_chat_${skillId}`;
-        const history = await getJSON<ChatMessage[]>(chatKey, []);
-        setMessages(history);
-      }
+      const chatKey = `echovault_skill_chat_${skillId}`;
+      const history = await getJSON<ChatMessage[]>(chatKey, []);
+      setMessages(history);
     } catch (err) {
       console.error('加载失败:', err);
     } finally {
@@ -159,22 +174,35 @@ export default function SkillChatPage() {
       const messagesWithPlaceholder = [...updatedMessages, assistantMessage];
       setMessages(messagesWithPlaceholder);
 
-      await getAIService().streamChatCompletion(
-        chatMessages,
-        (chunk: string, done?: boolean) => {
-          if (done) return;
-          assistantMessage.content += chunk;
-          setMessages(prev => {
-            const updated = [...prev];
-            const lastMsg = updated[updated.length - 1];
-            if (lastMsg && lastMsg.id === assistantMessage.id) {
-              updated[updated.length - 1] = { ...lastMsg, content: assistantMessage.content };
-            }
-            return updated;
-          });
-        },
-        { temperature: 0.8, maxTokens: 2048 }
-      );
+      const streamCallback = (chunk: string, done?: boolean) => {
+        if (done) return;
+        assistantMessage.content += chunk;
+        setMessages(prev => {
+          const updated = [...prev];
+          const lastMsg = updated[updated.length - 1];
+          if (lastMsg && lastMsg.id === assistantMessage.id) {
+            updated[updated.length - 1] = { ...lastMsg, content: assistantMessage.content };
+          }
+          return updated;
+        });
+      };
+
+      if (skill.isBackend) {
+        // Use skill-aware backend endpoint
+        await getAIService().streamSkillChat(
+          skillId,
+          updatedMessages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+          streamCallback,
+          { temperature: 0.8, maxTokens: 2048 }
+        );
+      } else {
+        // Use generic completions endpoint with local system prompt
+        await getAIService().streamChatCompletion(
+          chatMessages,
+          streamCallback,
+          { temperature: 0.8, maxTokens: 2048 }
+        );
+      }
 
       const finalMessages = [...updatedMessages, assistantMessage];
       saveHistory(finalMessages);

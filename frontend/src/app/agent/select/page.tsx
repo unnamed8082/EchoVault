@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { getJSON, setJSON } from '../../../lib/storage';
+import { distillAPI } from '../../../lib/api-client';
 
 interface Agent {
   id: string;
@@ -11,6 +12,7 @@ interface Agent {
   description: string;
   personality: string[];
   color: string;
+  isBackend?: boolean;
 }
 
 interface ChatMessage {
@@ -72,9 +74,38 @@ export default function AgentSelectPage() {
   const loadAgents = async () => {
     try {
       const savedAgents = await getJSON<Agent[]>(STORAGE_KEY_AGENTS, []);
+      let allAgents = defaultAgents;
       if (savedAgents && savedAgents.length > 0) {
-        setAgents(savedAgents);
+        allAgents = [...defaultAgents, ...savedAgents.filter(a => !defaultAgents.some(d => d.id === a.id))];
       }
+
+      // Load backend skills
+      try {
+        const list = await distillAPI.listSkills();
+        const details = await Promise.all(
+          list.skills.map(s => distillAPI.getSkill(s).catch(() => null))
+        );
+        const backendAgents: Agent[] = details
+          .filter((d): d is NonNullable<typeof d> => d !== null)
+          .map(d => {
+            const traits = d.persona_traits;
+            const tags = Array.isArray(traits?.tags) ? traits.tags as string[] : [];
+            return {
+              id: d.slug,
+              name: d.name,
+              avatar: '🤖',
+              description: d.lessons_content || tags.join('、') || '数字分身',
+              personality: tags.length > 0 ? tags : ['个性化', '数字分身'],
+              color: 'from-indigo-500 to-purple-500',
+              isBackend: true,
+            };
+          });
+        allAgents = [...allAgents, ...backendAgents.filter(ba => !allAgents.some(a => a.id === ba.id))];
+      } catch {
+        // Backend not available, use defaults only
+      }
+
+      setAgents(allAgents);
     } catch (error) {
       console.error('加载智能体失败:', error);
     } finally {

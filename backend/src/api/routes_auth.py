@@ -1,184 +1,271 @@
 """
-认证 API 路由（JWT）
+认证 API 路由
+使用 SQLAlchemy async + UserRepository
 """
 
-import re
-import sqlite3
-from contextlib import contextmanager
-from datetime import datetime, timedelta
+import sys
 from pathlib import Path
+
+from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel, Field
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Depends, status, Query
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel, EmailStr, Field
-from jose import JWTError, jwt
-import bcrypt
+from jose import jwt
+from datetime import datetime, timedelta
+from passlib.context import CryptContext
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config import settings
+from database import get_session
+from repositories.user_repository import UserRepository
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(tags=["auth"])
 
-SECRET_KEY = settings.SECRET_KEY
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
-
-DB_PATH = str(settings.DATA_DIR / "users.db")
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
-class _PwdContext:
-    def hash(self, password: str) -> str:
-        return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-
-    def verify(self, password: str, hashed: str) -> bool:
-        return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
-
-
-pwd_context = _PwdContext()
-
-bearer_scheme = HTTPBearer(auto_error=False)
-
-
-@contextmanager
-def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("PRAGMA journal_mode=WAL")
-    try:
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def _init_db():
-    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-    with get_db() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                username TEXT PRIMARY KEY,
-                email TEXT NOT NULL,
-                password_hash TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        columns = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
-        if "phone" not in columns:
-            conn.execute("ALTER TABLE users ADD COLUMN phone TEXT")
-
-
-_init_db()
-
-
-class UserRegister(BaseModel):
+class RegisterRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
-    email: EmailStr
-    password: str = Field(..., min_length=6)
+    email: str = Field(..., description="邮箱地址")
+    password: str = Field(..., min_length=6, max_length=100)
 
 
-class UserLogin(BaseModel):
+class LoginRequest(BaseModel):
     username: str
     password: str
 
 
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-
-
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-
-async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    if not credentials:
-        raise credentials_exception
-    try:
-        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-    except JWTError:
-        raise credentials_exception
-    with get_db() as conn:
-        row = conn.execute("SELECT username FROM users WHERE username = ?", (username,)).fetchone()
-    if not row:
-        raise credentials_exception
-    return {"username": username}
-
-
-@router.post("/register", response_model=TokenResponse, summary="用户注册")
-async def register(user: UserRegister):
-    with get_db() as conn:
-        existing = conn.execute("SELECT username FROM users WHERE username = ?", (user.username,)).fetchone()
-        if existing:
-            raise HTTPException(status_code=400, detail="Username already registered")
-        conn.execute(
-            "INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
-            (user.username, user.email, pwd_context.hash(user.password)),
-        )
-    access_token = create_access_token(
-        data={"sub": user.username},
-        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
-    )
-    return TokenResponse(access_token=access_token)
-
-
-@router.post("/login", response_model=TokenResponse, summary="用户登录")
-async def login(user: UserLogin):
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT password_hash FROM users WHERE username = ?", (user.username,)
-        ).fetchone()
-    if not row or not pwd_context.verify(user.password, row[0]):
-        raise HTTPException(status_code=401, detail="Invalid username or password")
-    access_token = create_access_token(
-        data={"sub": user.username},
-        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
-    )
-    return TokenResponse(access_token=access_token)
-
-
 class BindPhoneRequest(BaseModel):
     username: str
-    phone: str
+    phone_number: str
 
 
-PHONE_PATTERN = re.compile(r"^1[3-9]\d{9}$")
+def create_token(username: str) -> str:
+    payload = {
+        "sub": username,
+        "exp": datetime.utcnow() + timedelta(days=7)
+    }
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm="HS256")
 
 
-@router.post("/bindPhone", summary="绑定手机号")
-async def bind_phone(req: BindPhoneRequest, current_user: dict = Depends(get_current_user)):
-    if current_user["username"] != req.username:
-        raise HTTPException(status_code=403, detail="无权操作其他用户")
-    if not PHONE_PATTERN.match(req.phone):
-        raise HTTPException(status_code=400, detail="手机号格式不正确")
-    with get_db() as conn:
-        row = conn.execute("SELECT username FROM users WHERE username = ?", (req.username,)).fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="用户不存在")
-        conn.execute("UPDATE users SET phone = ? WHERE username = ?", (req.phone, req.username))
+@router.post("/register",
+    summary="用户注册",
+    description="""
+    ## 功能说明
+
+    创建新用户账号，注册成功后自动登录并返回 JWT Token。
+
+    ## 请求示例
+
+    ```
+    POST /api/auth/register
+    {
+        "username": "zhangsan",
+        "email": "zhangsan@example.com",
+        "password": "mypassword123"
+    }
+    ```
+
+    ## 参数说明
+
+    | 参数 | 类型 | 必填 | 说明 |
+    |------|------|------|------|
+    | username | string | 是 | 用户名，3-50字符 |
+    | email | string | 是 | 邮箱地址 |
+    | password | string | 是 | 密码，6-100字符 |
+
+    ## 响应示例
+
+    ```json
+    {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+        "username": "zhangsan",
+        "message": "注册成功"
+    }
+    ```
+
+    ## 错误码
+
+    | 状态码 | 说明 |
+    |--------|------|
+    | 200 | 注册成功 |
+    | 400 | 用户名已存在或邮箱已注册 |
+    | 422 | 参数验证失败 |
+    """
+)
+async def register(req: RegisterRequest, session: AsyncSession = Depends(get_session)):
+    repo = UserRepository(session)
+    existing = await repo.get_user_by_username(req.username)
+    if existing:
+        raise HTTPException(status_code=400, detail="用户名已存在")
+
+    hashed = pwd_context.hash(req.password)
+    await repo.create_user(req.username, req.email, hashed)
+    await session.commit()
+
+    token = create_token(req.username)
+    return {"token": token, "username": req.username, "message": "注册成功"}
+
+
+@router.post("/login",
+    summary="用户登录",
+    description="""
+    ## 功能说明
+
+    使用用户名和密码登录，返回 JWT Token。
+
+    ## 请求示例
+
+    ```
+    POST /api/auth/login
+    {
+        "username": "zhangsan",
+        "password": "mypassword123"
+    }
+    ```
+
+    ## 参数说明
+
+    | 参数 | 类型 | 必填 | 说明 |
+    |------|------|------|------|
+    | username | string | 是 | 用户名 |
+    | password | string | 是 | 密码 |
+
+    ## 响应示例
+
+    ```json
+    {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+        "username": "zhangsan",
+        "message": "登录成功"
+    }
+    ```
+
+    ## 错误码
+
+    | 状态码 | 说明 |
+    |--------|------|
+    | 200 | 登录成功 |
+    | 401 | 用户名或密码错误 |
+    | 422 | 参数验证失败 |
+    """
+)
+async def login(req: LoginRequest, session: AsyncSession = Depends(get_session)):
+    repo = UserRepository(session)
+    user = await repo.get_user_by_username(req.username)
+    if not user:
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+
+    if not pwd_context.verify(req.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+
+    token = create_token(req.username)
+    return {"token": token, "username": req.username, "message": "登录成功"}
+
+
+@router.post("/bindPhone",
+    summary="绑定手机号",
+    description="""
+    ## 功能说明
+
+    绑定用户手机号码，用于隐私数据擦除时的身份验证。
+
+    ## 请求示例
+
+    ```
+    POST /api/auth/bindPhone
+    {
+        "username": "zhangsan",
+        "phone_number": "13800138000"
+    }
+    ```
+
+    ## 参数说明
+
+    | 参数 | 类型 | 必填 | 说明 |
+    |------|------|------|------|
+    | username | string | 是 | 用户名 |
+    | phone_number | string | 是 | 手机号码 |
+
+    ## 响应示例
+
+    ```json
+    {
+        "success": true,
+        "message": "手机号绑定成功"
+    }
+    ```
+
+    ## 错误码
+
+    | 状态码 | 说明 |
+    |--------|------|
+    | 200 | 绑定成功 |
+    | 400 | 手机号格式错误 |
+    | 404 | 用户不存在 |
+    """
+)
+async def bind_phone(req: BindPhoneRequest, session: AsyncSession = Depends(get_session)):
+    if not req.phone_number or len(req.phone_number) < 11:
+        raise HTTPException(status_code=400, detail="手机号格式错误")
+
+    repo = UserRepository(session)
+    updated = await repo.update_user(req.username, {"phone_number": req.phone_number})
+    if not updated:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    await session.commit()
     return {"success": True, "message": "手机号绑定成功"}
 
 
-@router.get("/profile", summary="获取用户资料")
-async def get_profile(token: str = Query(...), current_user: dict = Depends(get_current_user)):
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT username, email, phone, created_at FROM users WHERE username = ?",
-            (current_user["username"],),
-        ).fetchone()
-    if not row:
+@router.get("/profile",
+    summary="获取用户信息",
+    description="""
+    ## 功能说明
+
+    获取当前用户的个人信息。
+
+    ## 请求示例
+
+    ```
+    GET /api/auth/profile?username=zhangsan
+    ```
+
+    ## 参数说明
+
+    | 参数 | 类型 | 必填 | 说明 |
+    |------|------|------|------|
+    | username | string | 是 | 用户名 |
+
+    ## 响应示例
+
+    ```json
+    {
+        "username": "zhangsan",
+        "email": "zhangsan@example.com",
+        "phone_number": "138****8000",
+        "created_at": "2024-01-01T00:00:00"
+    }
+    ```
+
+    ## 错误码
+
+    | 状态码 | 说明 |
+    |--------|------|
+    | 200 | 获取成功 |
+    | 404 | 用户不存在 |
+    """
+)
+async def get_profile(username: str, session: AsyncSession = Depends(get_session)):
+    repo = UserRepository(session)
+    user = await repo.get_user_by_username(username)
+    if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
+
     return {
-        "username": row[0],
-        "email": row[1],
-        "phone": row[2],
-        "created_at": row[3],
+        "username": user["username"],
+        "email": user.get("email"),
+        "phone_number": user.get("phone_number"),
+        "created_at": str(user.get("created_at", ""))
     }

@@ -3,7 +3,7 @@
   "appName": "EchoVault",
   "webDir": "frontend/out",
   "server": {
-    "url": "https://your-domain.vercel.app",
+    "androidScheme": "https",
     "cleartext": true
   },
   "plugins": {

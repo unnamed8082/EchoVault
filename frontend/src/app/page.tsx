@@ -3,6 +3,7 @@
 import { useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useAuth } from '../lib/auth-context';
 
 interface CardData {
   id: string;
@@ -42,6 +43,7 @@ const cards: CardData[] = [
 
 export default function HomePage() {
   const router = useRouter();
+  const { username } = useAuth();
   const [activeCard, setActiveCard] = useState<string | null>(null);
   const [pressedCard, setPressedCard] = useState<string | null>(null);
 
@@ -129,30 +131,60 @@ export default function HomePage() {
         </div>
 
         <div className="text-center space-y-4">
-          <Link 
-            href="/app" 
-            className="
-              inline-block bg-gradient-to-r from-indigo-600 to-purple-600 
-              text-white px-10 py-4 rounded-xl text-lg font-medium 
-              hover:from-indigo-700 hover:to-purple-700 
-              transition-all duration-200 shadow-lg hover:shadow-xl 
-              no-underline transform hover:scale-105 active:scale-95
-              focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500
-            "
-          >
-            🚀 进入 EchoVault 主界面
-          </Link>
-          
-          <div className="pt-2">
-            <Link 
-              href="/distill" 
+          <div className="flex items-center justify-center gap-4 flex-wrap">
+            <Link
+              href="/app"
               className="
-                inline-block text-indigo-600 hover:text-indigo-800 
-                underline underline-offset-4 decoration-indigo-300
-                transition-colors text-sm font-medium no-underline
+                inline-block bg-gradient-to-r from-indigo-600 to-purple-600
+                text-white px-10 py-4 rounded-xl text-lg font-medium
+                hover:from-indigo-700 hover:to-purple-700
+                transition-all duration-200 shadow-lg hover:shadow-xl
+                no-underline transform hover:scale-105 active:scale-95
+                focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500
               "
             >
-              或直接创建 Skill →
+              🚀 进入 EchoVault 主界面
+            </Link>
+
+            {!username && (
+              <>
+                <Link
+                  href="/login"
+                  className="
+                    inline-block bg-white text-indigo-600 border-2 border-indigo-200
+                    px-8 py-4 rounded-xl text-lg font-medium
+                    hover:border-indigo-400 hover:bg-indigo-50
+                    transition-all duration-200 shadow-md hover:shadow-lg
+                    no-underline transform hover:scale-105 active:scale-95
+                  "
+                >
+                  登录
+                </Link>
+                <Link
+                  href="/register"
+                  className="
+                    inline-block bg-white text-purple-600 border-2 border-purple-200
+                    px-8 py-4 rounded-xl text-lg font-medium
+                    hover:border-purple-400 hover:bg-purple-50
+                    transition-all duration-200 shadow-md hover:shadow-lg
+                    no-underline transform hover:scale-105 active:scale-95
+                  "
+                >
+                  注册
+                </Link>
+              </>
+            )}
+          </div>
+
+          <div className="pt-2">
+            <Link
+              href="/treehole"
+              className="
+                inline-block text-gray-500 hover:text-gray-700
+                transition-colors text-sm font-medium
+              "
+            >
+              或直接使用树洞功能（无需登录）→
             </Link>
           </div>
         </div>

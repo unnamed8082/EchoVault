@@ -58,3 +58,11 @@ class FilesystemStorage(StorageBackend):
         if not target_dir.exists():
             return []
         return sorted([f.name for f in target_dir.iterdir() if f.is_file()])
+
+    async def save_upload(self, filename: str, content: bytes) -> bool:
+        try:
+            target_path = self.uploads_dir / filename
+            target_path.write_bytes(content)
+            return True
+        except Exception:
+            return False

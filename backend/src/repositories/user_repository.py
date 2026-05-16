@@ -21,7 +21,10 @@ class UserRepository(BaseRepository):
     async def get_user_by_username(self, username: str):
         stmt = select(users_table).where(users_table.c.username == username)
         result = await self.session.execute(stmt)
-        return result.first()
+        row = result.first()
+        if row is None:
+            return None
+        return row._asdict()
 
     async def update_user(self, username: str, **kwargs):
         stmt = (

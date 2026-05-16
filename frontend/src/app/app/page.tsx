@@ -2,6 +2,8 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
+import Link from 'next/link';
+import { useAuth } from '../../lib/auth-context';
 
 type AppMode = 'basic' | 'ai-chat' | 'agent';
 
@@ -40,6 +42,7 @@ const modes: ModeConfig[] = [
 export default function MainAppPage() {
   const router = useRouter();
   const pathname = usePathname();
+  const { username, logout } = useAuth();
   const [currentMode, setCurrentMode] = useState<AppMode>('basic');
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -210,6 +213,35 @@ export default function MainAppPage() {
 
         {/* Footer */}
         <div className="p-4 border-t border-gray-700 space-y-2">
+          {username ? (
+            <div className="px-4 py-2 rounded-lg bg-white/10 text-white text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <span>👤</span>
+                <span>{username}</span>
+              </span>
+              <button
+                onClick={() => { logout(); router.push('/'); }}
+                className="text-gray-400 hover:text-white text-xs"
+              >
+                退出
+              </button>
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <Link
+                href="/login"
+                className="flex-1 text-center px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm transition-colors no-underline"
+              >
+                登录
+              </Link>
+              <Link
+                href="/register"
+                className="flex-1 text-center px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm transition-colors no-underline"
+              >
+                注册
+              </Link>
+            </div>
+          )}
           <button
             onClick={() => router.push('/settings')}
             className="w-full text-left px-4 py-2 rounded-lg hover:bg-white/10 text-gray-300 hover:text-white transition-colors text-sm flex items-center gap-2"
@@ -225,7 +257,7 @@ export default function MainAppPage() {
             <span>返回首页</span>
           </button>
           <div className="text-xs text-gray-500 text-center pt-2">
-            v1.0.0 · 本地存储
+            v1.0.0
           </div>
         </div>
       </aside>

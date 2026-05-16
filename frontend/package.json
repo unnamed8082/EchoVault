@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",
+    "build:export": "NEXT_OUTPUT=export next build",
     "start": "next start -p 3000",
     "lint": "next lint",
     "test": "jest",
@@ -13,6 +14,8 @@
     "test:e2e:report": "playwright show-report"
   },
   "dependencies": {
+    "@capacitor/android": "^6.0.0",
+    "@capacitor/core": "^6.0.0",
     "@serwist/next": "^9.5.11",
     "axios": "^1.6.0",
     "next": "^14",
@@ -21,6 +24,7 @@
     "serwist": "^9.5.11"
   },
   "devDependencies": {
+    "@capacitor/cli": "^6.0.0",
     "@playwright/test": "^1.52.0",
     "@types/jest": "^30.0.0",
     "@types/node": "^20",

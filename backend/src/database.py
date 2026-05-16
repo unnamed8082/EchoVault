@@ -18,6 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
+import turso_compat
 from config import settings
 
 metadata = MetaData()
@@ -111,11 +112,22 @@ chat_messages_table = chat_messages
 consent_records_table = consent_records
 skill_files_table = skill_files
 
-async_engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=False,
-    pool_pre_ping=True,
-)
+if turso_compat.USE_TURSO:
+    async_engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        echo=False,
+        pool_pre_ping=True,
+        connect_args={
+            "sync_url": settings.TURSO_DATABASE_URL,
+            "auth_token": settings.TURSO_AUTH_TOKEN,
+        },
+    )
+else:
+    async_engine = create_async_engine(
+        settings.DATABASE_URL,
+        echo=False,
+        pool_pre_ping=True,
+    )
 
 async_session_factory = sessionmaker(
     async_engine,
@@ -129,7 +141,6 @@ async def init_db():
         await conn.run_sync(metadata.create_all)
 
 
-@asynccontextmanager
 async def get_session():
     async with async_session_factory() as session:
         try:
@@ -141,6 +152,18 @@ async def get_session():
 
 
 def get_sync_engine():
+    if turso_compat.USE_TURSO:
+        import libsql_experimental as libsql
+
+        def creator():
+            return libsql.connect(
+                settings.TURSO_LOCAL_DB or ":memory:",
+                sync_url=settings.TURSO_DATABASE_URL,
+                auth_token=settings.TURSO_AUTH_TOKEN,
+            )
+
+        return create_engine("sqlite://", creator=creator, echo=False, pool_pre_ping=True)
+
     sync_url = settings.DATABASE_URL.replace("+aiosqlite", "").replace(
         "sqlite+aiosqlite", "sqlite"
     )

@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { withRetry, isNetworkError, extractErrorMessage } from './retry';
 import { getAPIBaseURL } from './platform';
+import { getToken } from './auth-context';
 
 const api = axios.create({
   baseURL: getAPIBaseURL(),
@@ -10,21 +11,25 @@ const api = axios.create({
   timeout: 15000,
 });
 
+api.interceptors.request.use((config) => {
+  const token = getToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
 export interface DistillRequest {
   name: string;
   slug: string;
-  description?: string;
   persona_traits?: Record<string, unknown>;
   memory_items?: Record<string, unknown>;
-  include_lessons?: boolean;
-  lessons_data?: Record<string, unknown>;
 }
 
 export interface DistillResponse {
   success: boolean;
-  slug: string;
-  version: string;
-  skill_path: string;
+  message: string;
+  slug?: string;
 }
 
 export interface SkillListResponse {
@@ -34,11 +39,9 @@ export interface SkillListResponse {
 export interface SkillResponse {
   slug: string;
   name: string;
-  version: string;
-  description: string;
-  persona: string;
-  memory: string;
-  lessons?: string;
+  persona_traits: Record<string, unknown>;
+  memory_items: Record<string, unknown>;
+  lessons_content?: string;
 }
 
 export class APIError extends Error {

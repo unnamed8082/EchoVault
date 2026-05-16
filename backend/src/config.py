@@ -22,7 +22,12 @@ class Settings(BaseSettings):
     
     # 数据库
     DATABASE_URL: str = "sqlite+aiosqlite:///./data/echovault.db"
-    
+
+    # Turso
+    TURSO_DATABASE_URL: str = ""
+    TURSO_AUTH_TOKEN: str = ""
+    TURSO_LOCAL_DB: str = ""
+
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
     

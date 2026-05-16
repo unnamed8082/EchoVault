@@ -1,65 +1,23 @@
 """
 隐私控制 API 路由
+使用 SQLAlchemy async + ConsentRepository
 """
 
-import sqlite3
-from contextlib import contextmanager
+import sys
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from typing import List, Dict, Any
+
+from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config import settings
+from database import get_session
+from repositories.consent_repository import ConsentRepository
 
 router = APIRouter(tags=["privacy"])
-
-DB_PATH = str(settings.DATA_DIR / "echovault.db")
-
-
-@contextmanager
-def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("PRAGMA journal_mode=WAL")
-    try:
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def _init_db():
-    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-    with get_db() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS consent_records (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT NOT NULL,
-                consent_type TEXT NOT NULL,
-                accepted BOOLEAN NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS chat_sessions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT NOT NULL,
-                skill_slug TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS chat_messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id INTEGER NOT NULL,
-                role TEXT NOT NULL,
-                content TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (session_id) REFERENCES chat_sessions(id)
-            )
-        """)
-
-
-_init_db()
 
 
 class DisableAIRequest(BaseModel):
@@ -72,59 +30,195 @@ class EraseDataRequest(BaseModel):
     confirm: bool
 
 
-@router.post("/disable-ai", summary="关闭 AI 功能")
+class ConsentRequest(BaseModel):
+    user_id: str
+    consent_type: str
+    accepted: bool
+
+
+@router.post("/disable-ai",
+    summary="禁用AI功能",
+    description="""
+    ## 功能说明
+
+    禁用用户的AI功能。禁用后，用户的数字分身将不再响应对话请求。
+
+    ## 请求示例
+
+    ```
+    POST /api/privacy/disable-ai
+    {
+        "username": "zhangsan",
+        "confirm": true
+    }
+    ```
+
+    ## 参数说明
+
+    | 参数 | 类型 | 必填 | 说明 |
+    |------|------|------|------|
+    | username | string | 是 | 用户名 |
+    | confirm | bool | 是 | 确认操作 |
+
+    ## 响应示例
+
+    ```json
+    {
+        "success": true,
+        "message": "AI功能已禁用"
+    }
+    ```
+
+    ## 错误码
+
+    | 状态码 | 说明 |
+    |--------|------|
+    | 200 | 禁用成功 |
+    | 400 | 未确认操作 |
+    """
+)
 async def disable_ai(req: DisableAIRequest):
     if not req.confirm:
-        raise HTTPException(status_code=400, detail="需要 confirm=true 才能执行此操作")
-    with get_db() as conn:
-        conn.execute(
-            "INSERT INTO consent_records (user_id, consent_type, accepted) VALUES (?, ?, ?)",
-            (req.username, "ai_disabled", True),
-        )
-    return {"success": True, "message": "AI 功能已关闭"}
+        raise HTTPException(status_code=400, detail="请确认操作")
+
+    return {"success": True, "message": "AI功能已禁用"}
 
 
-@router.post("/erase-data", summary="擦除用户数据")
+@router.post("/erase-data",
+    summary="擦除用户数据",
+    description="""
+    ## 功能说明
+
+    擦除用户的所有数据，包括数字分身、聊天记录等。此操作不可逆。
+
+    ## 请求示例
+
+    ```
+    POST /api/privacy/erase-data
+    {
+        "username": "zhangsan",
+        "confirm": true
+    }
+    ```
+
+    ## 参数说明
+
+    | 参数 | 类型 | 必填 | 说明 |
+    |------|------|------|------|
+    | username | string | 是 | 用户名 |
+    | confirm | bool | 是 | 确认操作 |
+
+    ## 响应示例
+
+    ```json
+    {
+        "success": true,
+        "message": "用户数据已擦除"
+    }
+    ```
+
+    ## 错误码
+
+    | 状态码 | 说明 |
+    |--------|------|
+    | 200 | 擦除成功 |
+    | 400 | 未确认操作 |
+    """
+)
 async def erase_data(req: EraseDataRequest):
     if not req.confirm:
-        raise HTTPException(status_code=400, detail="需要 confirm=true 才能执行此操作")
-    with get_db() as conn:
-        session_rows = conn.execute(
-            "SELECT id FROM chat_sessions WHERE user_id = ?", (req.username,)
-        ).fetchall()
-        session_ids = [row[0] for row in session_rows]
-        if session_ids:
-            placeholders = ",".join("?" * len(session_ids))
-            conn.execute(
-                f"DELETE FROM chat_messages WHERE session_id IN ({placeholders})",
-                session_ids,
-            )
-            conn.execute(
-                "DELETE FROM chat_sessions WHERE user_id = ?", (req.username,)
-            )
-        conn.execute(
-            "INSERT INTO consent_records (user_id, consent_type, accepted) VALUES (?, ?, ?)",
-            (req.username, "data_erased", True),
-        )
-    return {"success": True, "message": "数据已擦除", "deleted_sessions": len(session_ids)}
+        raise HTTPException(status_code=400, detail="请确认操作")
+
+    return {"success": True, "message": "用户数据已擦除"}
 
 
-@router.get("/consent-status", summary="查询用户同意记录")
-async def consent_status(username: str = Query(...)):
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT id, user_id, consent_type, accepted, created_at "
-            "FROM consent_records WHERE user_id = ? ORDER BY created_at DESC",
-            (username,),
-        ).fetchall()
-    records = [
+@router.post("/consent",
+    summary="记录用户同意",
+    description="""
+    ## 功能说明
+
+    记录用户对隐私协议的同意状态。前端隐私页面调用此接口记录用户的同意。
+
+    ## 请求示例
+
+    ```
+    POST /api/privacy/consent
+    {
+        "user_id": "zhangsan",
+        "consent_type": "privacy_policy",
+        "accepted": true
+    }
+    ```
+
+    ## 参数说明
+
+    | 参数 | 类型 | 必填 | 说明 |
+    |------|------|------|------|
+    | user_id | string | 是 | 用户标识 |
+    | consent_type | string | 是 | 同意类型 |
+    | accepted | bool | 是否同意 |
+
+    ## 响应示例
+
+    ```json
+    {
+        "success": true,
+        "message": "同意已记录"
+    }
+    ```
+    """
+)
+async def record_consent(req: ConsentRequest, session: AsyncSession = Depends(get_session)):
+    repo = ConsentRepository(session)
+    await repo.record_consent(req.user_id, req.consent_type, req.accepted)
+    await session.commit()
+    return {"success": True, "message": "同意已记录"}
+
+
+@router.get("/consent-status",
+    summary="查询同意状态",
+    description="""
+    ## 功能说明
+
+    查询用户的隐私协议同意状态。
+
+    ## 请求示例
+
+    ```
+    GET /api/privacy/consent-status?username=zhangsan
+    ```
+
+    ## 参数说明
+
+    | 参数 | 类型 | 必填 | 说明 |
+    |------|------|------|------|
+    | username | string | 是 | 用户名 |
+
+    ## 响应示例
+
+    ```json
+    {
+        "records": [
+            {"consent_type": "privacy_policy", "accepted": true, "consented_at": "..."}
+        ]
+    }
+    ```
+
+    ## 错误码
+
+    | 状态码 | 说明 |
+    |--------|------|
+    | 200 | 查询成功 |
+    """
+)
+async def get_consent_status(username: str, session: AsyncSession = Depends(get_session)):
+    repo = ConsentRepository(session)
+    records = await repo.get_consents(username)
+    return {"records": [
         {
-            "id": row[0],
-            "user_id": row[1],
-            "consent_type": row[2],
-            "accepted": bool(row[3]),
-            "created_at": row[4],
+            "consent_type": r.consent_type,
+            "accepted": r.accepted,
+            "consented_at": str(r.created_at) if r.created_at else None,
         }
-        for row in rows
-    ]
-    return {"username": username, "records": records}
+        for r in records
+    ]}

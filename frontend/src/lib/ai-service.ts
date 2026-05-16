@@ -1,3 +1,5 @@
+import { getToken } from './auth-context';
+
 export interface LLMProviderConfig {
   apiKey: string;
   baseURL: string;
@@ -239,11 +241,15 @@ export class AIService {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), cfg.timeout);
 
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+        };
+        const token = getToken();
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
         const response = await fetch(`${this.backendURL}/api/chat/completions`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers,
           body: JSON.stringify(requestBody),
           signal: controller.signal
         });
@@ -327,11 +333,15 @@ export class AIService {
     let responseId = '';
 
     try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      const token = getToken();
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       const response = await fetch(`${this.backendURL}/api/chat/completions`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify(requestBody)
       });
 
@@ -380,6 +390,113 @@ export class AIService {
               }
             } catch {
               // Skip invalid JSON chunks
+            }
+          }
+        }
+      }
+
+      callback(fullContent, true);
+
+      return {
+        id: responseId || Date.now().toString(),
+        content: fullContent,
+        model: cfg.model,
+        provider: this.currentProvider,
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        finishReason: 'stop',
+        timestamp: Date.now()
+      };
+    } catch (error) {
+      callback('', true);
+      throw error;
+    }
+  }
+
+  async streamSkillChat(
+    slug: string,
+    messages: ChatMessage[],
+    callback: StreamCallback,
+    options: ChatCompletionOptions = {}
+  ): Promise<ChatCompletionResponse> {
+    if (!messages || messages.length === 0) {
+      throw new Error('Messages array cannot be empty');
+    }
+
+    const cfg = this.config[this.currentProvider];
+
+    const requestBody = {
+      slug,
+      provider: this.currentProvider,
+      model: cfg.model,
+      messages: messages.map(m => ({ role: m.role, content: m.content })),
+      max_tokens: options.maxTokens || 4096,
+      temperature: options.temperature ?? 0.7,
+      stream: true,
+      api_key: cfg.apiKey || undefined,
+    };
+
+    let fullContent = '';
+    let responseId = '';
+
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      const token = getToken();
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const response = await fetch(`${this.backendURL}/api/chat/`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(requestBody)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new APIError(
+          `Skill Chat API Error (${response.status}): ${errorData.detail || response.statusText}`,
+          response.status
+        );
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('Response body is not readable');
+      }
+
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n').filter(line => line.trim() !== '');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6).trim();
+
+            if (data === '[DONE]') {
+              callback('', true);
+              continue;
+            }
+
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.error) {
+                throw new APIError(parsed.error, undefined, 'skill_chat_error');
+              }
+              const delta = parsed.choices?.[0]?.delta?.content;
+              if (delta) {
+                fullContent += delta;
+                callback(delta);
+              }
+              if (!responseId && parsed.id) {
+                responseId = parsed.id;
+              }
+            } catch (e) {
+              if (e instanceof APIError) throw e;
             }
           }
         }

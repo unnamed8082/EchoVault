@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { getJSON, setJSON } from '../../../lib/storage';
+import { AIService, ChatMessage as AIChatMessage } from '../../../lib/ai-service';
 
 interface Message {
   id: string;
@@ -17,8 +18,17 @@ export default function AIChatPage() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const aiServiceRef = useRef<AIService | null>(null);
+
+  const getAIService = (): AIService => {
+    if (!aiServiceRef.current) {
+      aiServiceRef.current = AIService.fromEnvironment();
+    }
+    return aiServiceRef.current;
+  };
 
   useEffect(() => {
     loadHistory();
@@ -53,7 +63,7 @@ export default function AIChatPage() {
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!input.trim() || isLoading) return;
 
     const userMessage: Message = {
@@ -67,40 +77,53 @@ export default function AIChatPage() {
     setMessages(updatedMessages);
     setInput('');
     setIsLoading(true);
+    setError(null);
 
     try {
       await saveHistory(updatedMessages);
 
-      setTimeout(() => {
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          role: 'assistant',
-          content: generateAIResponse(userMessage.content),
-          timestamp: Date.now()
-        };
+      const chatMessages: AIChatMessage[] = [
+        { role: 'system', content: '你是一个友好、专业的AI智能助手。请用温暖、有帮助的方式与用户对话。' },
+        ...updatedMessages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
+      ];
 
-        const finalMessages = [...updatedMessages, assistantMessage];
-        setMessages(finalMessages);
-        saveHistory(finalMessages);
-        setIsLoading(false);
-      }, 1000 + Math.random() * 1000);
-    } catch (error) {
-      console.error('发送消息失败:', error);
+      const assistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now()
+      };
+
+      const messagesWithPlaceholder = [...updatedMessages, assistantMessage];
+      setMessages(messagesWithPlaceholder);
+
+      await getAIService().streamChatCompletion(
+        chatMessages,
+        (chunk: string, done?: boolean) => {
+          if (done) return;
+          assistantMessage.content += chunk;
+          setMessages(prev => {
+            const updated = [...prev];
+            const lastMsg = updated[updated.length - 1];
+            if (lastMsg && lastMsg.id === assistantMessage.id) {
+              updated[updated.length - 1] = { ...lastMsg, content: assistantMessage.content };
+            }
+            return updated;
+          });
+        },
+        { temperature: 0.7, maxTokens: 2048 }
+      );
+
+      const finalMessages = [...updatedMessages, assistantMessage];
+      saveHistory(finalMessages);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : '发送消息失败';
+      setError(errorMsg);
+      console.error('发送消息失败:', err);
+    } finally {
       setIsLoading(false);
     }
   }, [input, isLoading, messages]);
-
-  const generateAIResponse = (userInput: string): string => {
-    const responses = [
-      `我理解你的感受。关于"${userInput.slice(0, 20)}..."，我想说...`,
-      `这是一个很好的问题。让我来帮你分析一下...`,
-      `我听到了你的心声。作为你的 AI 陪伴，我会一直在这里支持你。`,
-      `感谢你与我分享。我们可以继续深入探讨这个话题。`,
-      `这是一个值得思考的角度。你觉得呢？`
-    ];
-    
-    return responses[Math.floor(Math.random() * responses.length)];
-  };
 
   const handleClearHistory = useCallback(async () => {
     if (window.confirm('确定要清空所有聊天记录吗？')) {
@@ -216,6 +239,14 @@ export default function AIChatPage() {
                     </div>
                     <span className="text-sm">AI 正在思考...</span>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {error && (
+              <div className="flex justify-center">
+                <div className="bg-red-50 border border-red-200 px-5 py-3 rounded-2xl shadow-sm text-red-600 text-sm">
+                  {error}
                 </div>
               </div>
             )}

@@ -33,3 +33,9 @@ class StorageBackend(ABC):
     @abstractmethod
     async def list_files(self, slug: str) -> List[str]:
         ...
+
+    async def save_upload(self, filename: str, content: bytes) -> bool:
+        raise NotImplementedError
+
+    async def list_versions(self, slug: str) -> List[str]:
+        return []

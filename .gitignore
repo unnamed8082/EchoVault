@@ -89,3 +89,7 @@ CLEANUP_REPORT_*.md
 # Project-specific
 .trae/
 .workbuddy/
+project.md
+online3.md
+backend/data/skills/
+backend/data/versions/

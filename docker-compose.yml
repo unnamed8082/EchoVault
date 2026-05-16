@@ -6,18 +6,22 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     ports:
-      - "9000:9000"
+      - "${PORT:-9000}:${PORT:-9000}"
     environment:
       - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
       - ENCRYPT_KEY=${ENCRYPT_KEY:-change-me-in-production}
       - DATABASE_URL=sqlite+aiosqlite:///./data/echovault.db
+      - TURSO_DATABASE_URL=${TURSO_DATABASE_URL:-}
+      - TURSO_AUTH_TOKEN=${TURSO_AUTH_TOKEN:-}
+      - TURSO_LOCAL_DB=${TURSO_LOCAL_DB:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000}
+      - PORT=${PORT:-9000}
     volumes:
       - ./data:/app/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:${PORT:-9000}/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -28,11 +32,11 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        - NEXT_PUBLIC_API_URL=http://api:9000
+        - NEXT_PUBLIC_API_URL=http://api:${PORT:-9000}
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:9000
+      - NEXT_PUBLIC_API_URL=http://localhost:${PORT:-9000}
     depends_on:
       api:
         condition: service_healthy

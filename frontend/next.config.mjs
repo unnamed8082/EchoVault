@@ -1,9 +1,16 @@
-const { withSerwist } = require("@serwist/next");
-const path = require('path');
+import withSerwistInit from "@serwist/next";
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const nextConfig = {
+  output: 'standalone',
   reactStrictMode: true,
   async rewrites() {
+    if (process.env.NEXT_PUBLIC_API_URL) {
+      return [];
+    }
     return [
       {
         source: '/api/:path*',
@@ -29,9 +36,7 @@ const nextConfig = {
   },
 };
 
-module.exports = withSerwist({
-  ...nextConfig,
-})({
-  sw: "sw.ts",
+export default withSerwistInit({
   swSrc: "app/sw.ts",
-});
+  swDest: "public/sw.js",
+})(nextConfig);
