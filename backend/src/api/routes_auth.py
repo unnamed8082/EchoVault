@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 from jose import jwt
 from datetime import datetime, timedelta
-from passlib.context import CryptContext
+import bcrypt
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -22,7 +22,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(tags=["auth"])
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(password: str, hashed: str) -> bool:
+    return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
 
 
 class RegisterRequest(BaseModel):
@@ -100,7 +106,7 @@ async def register(req: RegisterRequest, session: AsyncSession = Depends(get_ses
     if existing:
         raise HTTPException(status_code=400, detail="用户名已存在")
 
-    hashed = pwd_context.hash(req.password)
+    hashed = hash_password(req.password)
     await repo.create_user(req.username, req.email, hashed)
     await session.commit()
 
@@ -157,7 +163,7 @@ async def login(req: LoginRequest, session: AsyncSession = Depends(get_session))
     if not user:
         raise HTTPException(status_code=401, detail="用户名或密码错误")
 
-    if not pwd_context.verify(req.password, user["password_hash"]):
+    if not verify_password(req.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="用户名或密码错误")
 
     token = create_token(req.username)
