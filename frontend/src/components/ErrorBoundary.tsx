@@ -61,7 +61,7 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 text-left text-sm text-blue-800">
               <p className="font-medium mb-2">您可以尝试：</p>
               <ul className="list-disc list-inside space-y-1 text-blue-700">
-                <li>点击下方"重试"按钮</li>
+                <li>点击下方{'"重试"'}按钮</li>
                 <li>刷新浏览器页面</li>
                 {isNetworkError && <li>检查网络连接是否正常</li>}
                 <li>清除浏览器缓存后重新访问</li>
