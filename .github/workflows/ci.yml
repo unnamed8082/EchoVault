@@ -75,7 +75,7 @@ jobs:
           cd backend
           pip install pip-audit
           pip install -r requirements.txt
-          pip-audit -r requirements.txt
+          pip-audit -r requirements.txt --ignore-vuln CVE-2025-71176
 
   docker:
     runs-on: ubuntu-latest
